@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# HR Platform v2 (HR2)
 
-## Getting Started
+Multi-tenant HR platform. Anajak dogfood year 1 → SaaS launch year 2.
 
-First, run the development server:
+> Master plan: `vault/decisions/2026-05-16-hr-platform-v2-master-plan.md` (in BestOS vault)
+> Project tracker: `vault/projects/hr-platform-v2.md`
+
+## Stack
+
+- **Frontend**: Next.js 16 (App Router) + React 19 + Tailwind v4 + shadcn/ui (planned)
+- **DB**: Supabase Postgres
+- **ORM**: Prisma 7
+- **Auth**: Supabase Auth (`@supabase/ssr`)
+- **Multi-tenancy**: Row Level Security (RLS) — every business table has `organization_id`
+- **Mobile**: PWA (Phase 1)
+- **AI**: Claude API (Phase 3)
+- **Deploy**: Vercel + Supabase
+
+## Setup
 
 ```bash
+cp .env.example .env.local
+# Fill DATABASE_URL + Supabase keys
+
+npm install
+npx prisma generate
+npx prisma migrate dev --name init
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Project Structure
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+prisma/
+  schema.prisma          # Multi-tenant schema (Organization, User, Employee)
+src/
+  app/                   # Next.js App Router
+  lib/
+    prisma.ts            # Prisma client singleton
+    supabase/
+      server.ts          # Server-side Supabase (SSR)
+      client.ts          # Browser-side Supabase
+  generated/prisma/      # Generated Prisma client (gitignored)
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Multi-tenancy
 
-## Learn More
+Every business table:
+1. has `organization_id` (uuid, FK to `organizations`)
+2. has RLS policy `org_id = (auth.jwt()->>'organization_id')::uuid`
+3. is indexed on `organization_id`
 
-To learn more about Next.js, take a look at the following resources:
+See `prisma/schema.prisma` for current models.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Phase 0 — Foundation (2026-05-17 → 2026-05-31)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- [x] Next.js 16 + TypeScript + Tailwind v4 scaffold
+- [x] Prisma 7 + Supabase SSR install
+- [x] Multi-tenant schema skeleton (Organization, User, Employee)
+- [ ] Supabase project creation + DATABASE_URL
+- [ ] First migration applied
+- [ ] RLS policies (organizations, users, employees)
+- [ ] Auth flow (login/signup with org selection)
+- [ ] Vercel deploy
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Next phases → see master plan in vault.
