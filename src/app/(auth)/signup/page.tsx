@@ -47,7 +47,7 @@ export default async function SignupPage({
           name="organization_slug"
           type="text"
           required
-          pattern="[a-z0-9-]+"
+          pattern="[-a-z0-9]+"
           placeholder="anajak"
           className="mt-1 w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm"
         />
