@@ -13,7 +13,7 @@ datasource db {
 
 // Tenant root — every other table FK to this
 model Organization {
-  id        String   @id @default(uuid()) @db.Uuid
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   slug      String   @unique
   name      String
   plan      String   @default("free")
@@ -44,7 +44,7 @@ model User {
 
 // Employee profile — separate from User (HR data vs auth data)
 model Employee {
-  id             String   @id @default(uuid()) @db.Uuid
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
   userId         String?  @unique @map("user_id") @db.Uuid
   employeeCode   String   @map("employee_code")
