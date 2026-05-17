@@ -1,6 +1,7 @@
-// HR Platform v2 — Multi-tenant first schema
-// Decision: vault/decisions/2026-05-16-hr-platform-v2-master-plan.md
-// Pattern: every business table has organization_id + RLS policy
+// HR Platform v2 — Sprint 1.1 Employee Profile expansion
+// Extends Phase 0 schema with full employee profile + lifecycle + org structure
+// Sprint scope: vault/projects/hr-platform-v2/features.md §1.1-1.7
+// Pattern: every business table has organization_id + RLS policy (see prisma/sql/03_rls_sprint_1_1.sql)
 
 generator client {
   provider = "prisma-client"
@@ -11,7 +12,9 @@ datasource db {
   provider = "postgresql"
 }
 
-// Tenant root — every other table FK to this
+// ============================================================
+// Tenant root
+// ============================================================
 model Organization {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   slug      String   @unique
@@ -20,13 +23,18 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users     User[]
-  employees Employee[]
+  users       User[]
+  employees   Employee[]
+  positions   Position[]
+  departments Department[]
+  branches    Branch[]
 
   @@map("organizations")
 }
 
-// Maps 1:1 to Supabase auth.users via id (auth_user_id)
+// ============================================================
+// Auth user (1:1 with auth.users via id)
+// ============================================================
 model User {
   id             String   @id @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
@@ -42,26 +50,300 @@ model User {
   @@map("users")
 }
 
-// Employee profile — separate from User (HR data vs auth data)
-model Employee {
+// ============================================================
+// Position — ตำแหน่งงาน (level + salary band + JD)
+// ============================================================
+model Position {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId String   @map("organization_id") @db.Uuid
-  userId         String?  @unique @map("user_id") @db.Uuid
-  employeeCode   String   @map("employee_code")
-  firstName      String   @map("first_name")
-  lastName       String   @map("last_name")
-  startDate      DateTime @map("start_date") @db.Date
-  status         EmployeeStatus @default(ACTIVE)
+  title          String
+  level          Int      @default(1)
+  salaryBandMin  Decimal? @map("salary_band_min") @db.Decimal(10, 2)
+  salaryBandMax  Decimal? @map("salary_band_max") @db.Decimal(10, 2)
+  jobDescription String?  @map("job_description")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  employees    Employee[]
+
+  @@unique([organizationId, title])
+  @@index([organizationId])
+  @@map("positions")
+}
+
+// ============================================================
+// Department — แผนก (tree via parent_id)
+// ============================================================
+model Department {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  parentId       String?  @map("parent_id") @db.Uuid
+  name           String
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent       Department?  @relation("DepartmentTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Department[] @relation("DepartmentTree")
+  employees    Employee[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([parentId])
+  @@map("departments")
+}
+
+// ============================================================
+// Branch — สาขา (multi-location + GPS)
+// ============================================================
+model Branch {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String
+  address        Json?
+  gpsLat         Decimal? @map("gps_lat") @db.Decimal(9, 6)
+  gpsLng         Decimal? @map("gps_lng") @db.Decimal(9, 6)
+  radiusMeters   Int      @default(100) @map("radius_meters")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  primaryEmployees Employee[]       @relation("EmployeePrimaryBranch")
+  employeeBranches EmployeeBranch[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("branches")
+}
+
+// ============================================================
+// Employee — extended profile (1.1-1.7)
+// Bank account + Tax PIN encrypted via app-level AES-256-GCM (src/lib/crypto.ts)
+// ============================================================
+model Employee {
+  id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  userId         String? @unique @map("user_id") @db.Uuid
+  employeeCode   String  @map("employee_code")
+
+  // ส่วนตัว
+  firstNameTh   String         @map("first_name_th")
+  lastNameTh    String         @map("last_name_th")
+  firstNameEn   String?        @map("first_name_en")
+  lastNameEn    String?        @map("last_name_en")
+  nationalId    String?        @map("national_id") // 13 digits Thai (mod 11 check at app)
+  passportNo    String?        @map("passport_no") // foreign workers
+  birthDate     DateTime?      @map("birth_date") @db.Date
+  gender        Gender?
+  nationality   String         @default("THAI")
+  religion      String?
+  bloodType     BloodType?     @map("blood_type")
+  maritalStatus MaritalStatus? @map("marital_status")
+
+  // ติดต่อ
+  phonePrimary      String  @map("phone_primary")
+  phoneSecondary    String? @map("phone_secondary")
+  email             String?
+  lineId            String? @map("line_id")
+  addressCurrent    Json?   @map("address_current")
+  addressRegistered Json?   @map("address_registered")
+  sameAddress       Boolean @default(false) @map("same_address")
+
+  // บัญชี (encrypted)
+  bankCode             String? @map("bank_code")
+  bankAccountNumberEnc String? @map("bank_account_number_enc")
+  bankAccountName      String? @map("bank_account_name")
+
+  // ภาษี (PIN encrypted)
+  taxPinEnc     String? @map("tax_pin_enc")
+  taxDependents Int     @default(0) @map("tax_dependents")
+  taxAllowances Json?   @map("tax_allowances") // {insurance, rmf, ssf, ...}
+
+  // Position/org
+  positionId      String? @map("position_id") @db.Uuid
+  departmentId    String? @map("department_id") @db.Uuid
+  primaryBranchId String? @map("primary_branch_id") @db.Uuid
+  managerId       String? @map("manager_id") @db.Uuid
+
+  // Status + lifecycle (per features.md §1.7)
+  startDate        DateTime       @map("start_date") @db.Date // hire date (= startDate Phase 0)
+  probationEndDate DateTime?      @map("probation_end_date") @db.Date // startDate + 119 days (computed at app)
+  status           EmployeeStatus @default(APPLICANT)
+  statusUpdatedAt  DateTime       @default(now()) @map("status_updated_at")
+  resignDate       DateTime?      @map("resign_date") @db.Date
+  archiveDate      DateTime?      @map("archive_date") @db.Date
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  position      Position?    @relation(fields: [positionId], references: [id], onDelete: SetNull)
+  department    Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  primaryBranch Branch?      @relation("EmployeePrimaryBranch", fields: [primaryBranchId], references: [id], onDelete: SetNull)
+  manager       Employee?    @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
+  subordinates  Employee[]   @relation("EmployeeManager")
+
+  branches             EmployeeBranch[]
+  familyMembers        EmployeeFamilyMember[]
+  emergencyContacts    EmployeeEmergencyContact[]
+  salaryHistory        SalaryHistory[]
+  documents            EmployeeDocument[]
+  probationEvaluations ProbationEvaluation[]
+  statusHistory        EmployeeStatusHistory[]
 
   @@unique([organizationId, employeeCode])
   @@index([organizationId])
+  @@index([status])
+  @@index([probationEndDate])
   @@map("employees")
 }
+
+// ============================================================
+// EmployeeBranch — junction (1 พนักงาน N สาขา, 1 หลัก mirror in Employee.primaryBranchId)
+// ============================================================
+model EmployeeBranch {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  branchId   String   @map("branch_id") @db.Uuid
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, branchId])
+  @@index([employeeId])
+  @@index([branchId])
+  @@map("employee_branches")
+}
+
+// ============================================================
+// EmployeeFamilyMember — ครอบครัว (ลดหย่อนภาษี + emergency reference)
+// ============================================================
+model EmployeeFamilyMember {
+  id         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId String         @map("employee_id") @db.Uuid
+  relation   FamilyRelation
+  fullName   String         @map("full_name")
+  nationalId String?        @map("national_id") // only for spouse/children (tax deduction)
+  birthDate  DateTime?      @map("birth_date") @db.Date
+  createdAt  DateTime       @default(now()) @map("created_at")
+  updatedAt  DateTime       @updatedAt @map("updated_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@map("employee_family_members")
+}
+
+// ============================================================
+// EmployeeEmergencyContact — ผู้ติดต่อฉุกเฉิน 1-2 คน
+// ============================================================
+model EmployeeEmergencyContact {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId String   @map("employee_id") @db.Uuid
+  fullName   String   @map("full_name")
+  relation   String // free text "พี่สาว", "เพื่อน"
+  phone      String
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@map("employee_emergency_contacts")
+}
+
+// ============================================================
+// SalaryHistory — ประวัติเงินเดือน (append-only)
+// ============================================================
+model SalaryHistory {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId    String    @map("employee_id") @db.Uuid
+  effectiveDate DateTime  @map("effective_date") @db.Date
+  oldSalary     Decimal   @map("old_salary") @db.Decimal(10, 2)
+  newSalary     Decimal   @map("new_salary") @db.Decimal(10, 2)
+  reason        String // "annual", "promotion", "restructure", "other"
+  reasonNotes   String?   @map("reason_notes")
+  approverId    String?   @map("approver_id") @db.Uuid
+  approvedAt    DateTime? @map("approved_at")
+  documentUrl   String?   @map("document_url")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([effectiveDate])
+  @@map("salary_history")
+}
+
+// ============================================================
+// EmployeeDocument — คลังไฟล์ (Supabase Storage path ref)
+// ============================================================
+model EmployeeDocument {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId  String       @map("employee_id") @db.Uuid
+  type        DocumentType
+  fileName    String       @map("file_name")
+  storagePath String       @map("storage_path") // Supabase Storage path
+  fileSize    Int          @map("file_size")
+  mimeType    String       @map("mime_type")
+  expiresAt   DateTime?    @map("expires_at") @db.Date
+  uploadedBy  String?      @map("uploaded_by") @db.Uuid
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([type])
+  @@index([expiresAt])
+  @@map("employee_documents")
+}
+
+// ============================================================
+// ProbationEvaluation — ประเมินทดลองงาน 119 วัน
+// ============================================================
+model ProbationEvaluation {
+  id          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId  String            @map("employee_id") @db.Uuid
+  evaluatorId String?           @map("evaluator_id") @db.Uuid
+  evaluatedAt DateTime          @map("evaluated_at")
+  decision    ProbationDecision
+  score       Int? // 1-5 or 1-10 (app-defined)
+  notes       String?
+  createdAt   DateTime          @default(now()) @map("created_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([evaluatedAt])
+  @@map("probation_evaluations")
+}
+
+// ============================================================
+// EmployeeStatusHistory — state machine log (per features.md §1.7)
+// ============================================================
+model EmployeeStatusHistory {
+  id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employeeId String          @map("employee_id") @db.Uuid
+  fromStatus EmployeeStatus? @map("from_status")
+  toStatus   EmployeeStatus  @map("to_status")
+  reason     String?
+  actorId    String?         @map("actor_id") @db.Uuid
+  changedAt  DateTime        @default(now()) @map("changed_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([changedAt])
+  @@map("employee_status_history")
+}
+
+// ============================================================
+// Enums
+// ============================================================
 
 enum Role {
   OWNER
@@ -72,8 +354,55 @@ enum Role {
 }
 
 enum EmployeeStatus {
-  ACTIVE
+  APPLICANT
   PROBATION
+  PERMANENT
   RESIGNED
   TERMINATED
+  ARCHIVED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum BloodType {
+  A
+  B
+  AB
+  O
+}
+
+enum MaritalStatus {
+  SINGLE
+  MARRIED
+  DIVORCED
+  WIDOWED
+}
+
+enum FamilyRelation {
+  SPOUSE
+  FATHER
+  MOTHER
+  CHILD
+}
+
+enum DocumentType {
+  NATIONAL_ID
+  HOUSE_REGISTRATION
+  EDUCATION_CERT
+  TRANSCRIPT
+  PREVIOUS_EMPLOYMENT
+  MEDICAL_CERT
+  EMPLOYMENT_CONTRACT
+  WARNING_LETTER
+  OTHER
+}
+
+enum ProbationDecision {
+  PASS
+  FAIL
+  EXTEND
 }
