@@ -23,11 +23,14 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  users       User[]
-  employees   Employee[]
-  positions   Position[]
-  departments Department[]
-  branches    Branch[]
+  users             User[]
+  employees         Employee[]
+  positions         Position[]
+  departments       Department[]
+  branches          Branch[]
+  shifts            Shift[]
+  employeeShifts    EmployeeShift[]
+  attendanceRecords AttendanceRecord[]
 
   @@map("organizations")
 }
@@ -108,9 +111,11 @@ model Branch {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  primaryEmployees Employee[]       @relation("EmployeePrimaryBranch")
-  employeeBranches EmployeeBranch[]
+  organization      Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  primaryEmployees  Employee[]       @relation("EmployeePrimaryBranch")
+  employeeBranches  EmployeeBranch[]
+  shifts            Shift[]
+  attendanceRecords AttendanceRecord[]
 
   @@unique([organizationId, name])
   @@index([organizationId])
@@ -192,6 +197,8 @@ model Employee {
   documents            EmployeeDocument[]
   probationEvaluations ProbationEvaluation[]
   statusHistory        EmployeeStatusHistory[]
+  employeeShifts       EmployeeShift[]
+  attendanceRecords    AttendanceRecord[]
 
   @@unique([organizationId, employeeCode])
   @@index([organizationId])
@@ -405,4 +412,107 @@ enum ProbationDecision {
   PASS
   FAIL
   EXTEND
+}
+
+// ============================================================
+// Sprint 1.2 — Attendance (features.md §2.1, §2.4, §2.6, §2.7, §2.8)
+// ============================================================
+
+// Shift — กะการทำงาน template (08:00-17:00, 14:00-22:00, ...)
+// startTime/endTime stored as minutes since midnight (0..1439) for shift-spans-midnight support
+model Shift {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  branchId       String?  @map("branch_id") @db.Uuid // optional — shift can be org-wide or branch-specific
+  name           String // "กะเช้า", "กะบ่าย", "กะดึก"
+  startMinutes   Int      @map("start_minutes") // 0..1439 (e.g. 8*60 = 480 for 08:00)
+  endMinutes     Int      @map("end_minutes") // can be < startMinutes if crosses midnight (e.g. 22*60 → 6*60)
+  breakMinutes   Int      @default(0) @map("break_minutes") // total break time (lunch + snacks) — deduct from worked hours
+  graceMinutes   Int      @default(5) @map("grace_minutes") // late grace period
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch         Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  employeeShifts EmployeeShift[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([branchId])
+  @@map("shifts")
+}
+
+// EmployeeShift — assign กะให้พนักงานเป็นรายวัน (1 คน 1 shift ต่อวัน)
+model EmployeeShift {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  employeeId     String   @map("employee_id") @db.Uuid
+  shiftId        String   @map("shift_id") @db.Uuid
+  workDate       DateTime @map("work_date") @db.Date
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shift        Shift        @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+
+  @@unique([employeeId, workDate]) // 1 คน 1 กะ ต่อวัน
+  @@index([organizationId])
+  @@index([workDate])
+  @@map("employee_shifts")
+}
+
+// AttendanceRecord — check-in/out events + GPS + selfie + computed status
+// 1 record = 1 event (not 1 day) — pair check-in with check-out for full shift
+model AttendanceRecord {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String           @map("organization_id") @db.Uuid
+  employeeId     String           @map("employee_id") @db.Uuid
+  branchId       String?          @map("branch_id") @db.Uuid // branch ที่เช็คอิน (null ถ้านอกสถานที่ approved)
+  type           AttendanceType
+  method         AttendanceMethod
+  status         AttendanceStatus @default(ON_TIME)
+  occurredAt     DateTime         @map("occurred_at") // when event happened
+  gpsLat         Decimal?         @map("gps_lat") @db.Decimal(9, 6)
+  gpsLng         Decimal?         @map("gps_lng") @db.Decimal(9, 6)
+  gpsAccuracyM   Int?             @map("gps_accuracy_m") // meters reported by browser
+  insideGeofence Boolean?         @map("inside_geofence") // null if no branch/GPS check
+  selfieUrl      String?          @map("selfie_url") // Supabase Storage path
+  offlineSyncId  String?          @map("offline_sync_id") // dedupe key for PWA sync
+  notes          String?
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  branch       Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@unique([offlineSyncId]) // null allowed, prevents duplicate sync from PWA
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([occurredAt])
+  @@index([employeeId, occurredAt])
+  @@map("attendance_records")
+}
+
+enum AttendanceType {
+  CHECK_IN
+  CHECK_OUT
+  BREAK_START
+  BREAK_END
+}
+
+enum AttendanceMethod {
+  GPS // mobile PWA with GPS + selfie
+  QR // QR kiosk at factory
+  MANUAL // HR override (no GPS / forgot check-out)
+  FINGERPRINT // Phase 3 — biometric device
+}
+
+enum AttendanceStatus {
+  ON_TIME
+  LATE
+  EARLY // ออกก่อน shift end
+  MISSING // ลืม check-out → auto-generated by cron
+  OUT_OF_GEOFENCE
 }
