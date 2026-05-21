@@ -14,6 +14,10 @@ const NAV = [
   { href: "/leaves", label: "ลา" },
   { href: "/leave-types", label: "ตั้งค่าลา" },
   { href: "/ot", label: "OT" },
+  { href: "/employees", label: "พนักงาน" },
+  { href: "/admin/positions", label: "ตำแหน่ง" },
+  { href: "/admin/departments", label: "แผนก" },
+  { href: "/admin/branches", label: "สาขา" },
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
