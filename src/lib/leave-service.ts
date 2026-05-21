@@ -3,6 +3,7 @@
 // Carryover = simplified: previous year unused (capped at type.carryoverMaxDays) added to current quota.
 
 import { prisma } from "./prisma";
+import { sendPushToEmployee } from "./push-service";
 import type { LeaveStatus } from "@/generated/prisma/enums";
 
 export class LeaveValidationError extends Error {
@@ -215,7 +216,7 @@ export async function decideLeaveRequest(
     }
   }
 
-  return prisma.leaveRequest.update({
+  const updated = await prisma.leaveRequest.update({
     where: { id },
     data: {
       status: decision,
@@ -224,6 +225,16 @@ export async function decideLeaveRequest(
       decisionNotes: notes ?? null,
     },
   });
+
+  // Notify the requester (fire-and-forget; failures logged, not thrown)
+  sendPushToEmployee(orgId, existing.employeeId, {
+    title: decision === "APPROVED" ? "ลาได้รับการอนุมัติ" : "ลาถูกปฏิเสธ",
+    body: `${existing.leaveType.nameTh} ${existing.startDate.toISOString().slice(0, 10)}${notes ? ` — ${notes}` : ""}`,
+    url: "/leaves",
+    tag: `leave-${id}`,
+  }).catch((e) => console.warn("[push] leave notify failed:", e));
+
+  return updated;
 }
 
 export async function cancelLeaveRequest(orgId: string, id: string, employeeId: string) {

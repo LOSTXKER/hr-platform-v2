@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { logout } from "../(auth)/actions";
 import { Toaster } from "@/components/ui/sonner";
+import { PushToggle } from "@/components/push-toggle";
 
 const NAV = [
   { href: "/dashboard", label: "หน้าหลัก" },
@@ -42,6 +43,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             ))}
           </nav>
           <div className="flex items-center gap-3 text-sm">
+            <PushToggle />
             <span className="text-muted-foreground hidden sm:inline">{user.email}</span>
             <form action={logout}>
               <button type="submit" className="text-muted-foreground hover:text-foreground">

@@ -34,6 +34,7 @@ model Organization {
   leaveTypes        LeaveType[]
   leaveRequests     LeaveRequest[]
   otRequests        OtRequest[]
+  pushSubscriptions PushSubscription[]
 
   @@map("organizations")
 }
@@ -206,6 +207,7 @@ model Employee {
   leaveApprovals       LeaveRequest[]   @relation("LeaveApprover")
   otRequests           OtRequest[]      @relation("OtRequester")
   otApprovals          OtRequest[]      @relation("OtApprover")
+  pushSubscriptions    PushSubscription[]
 
   @@unique([organizationId, employeeCode])
   @@index([organizationId])
@@ -642,4 +644,26 @@ enum OtDayType {
   WEEKDAY
   WEEKEND
   HOLIDAY
+}
+
+// ============================================================
+// Sprint 1.5 — Web Push subscriptions
+// ============================================================
+model PushSubscription {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  employeeId     String   @map("employee_id") @db.Uuid
+  endpoint       String   @unique // browser-specific URL
+  p256dh         String // base64 public key
+  authSecret     String   @map("auth_secret") // base64 auth secret
+  userAgent      String?  @map("user_agent")
+  createdAt      DateTime @default(now()) @map("created_at")
+  lastUsedAt     DateTime @default(now()) @map("last_used_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@map("push_subscriptions")
 }

@@ -3,6 +3,7 @@
 // 36 hour/week cap per employee (Thai law) — enforced on create + re-checked at approval
 
 import { prisma } from "./prisma";
+import { sendPushToEmployee } from "./push-service";
 import type { OtDayType, OtStatus } from "@/generated/prisma/enums";
 
 export class OtValidationError extends Error {
@@ -193,7 +194,7 @@ export async function decideOtRequest(
     }
   }
 
-  return prisma.otRequest.update({
+  const updated = await prisma.otRequest.update({
     where: { id },
     data: {
       status: decision,
@@ -202,6 +203,15 @@ export async function decideOtRequest(
       decisionNotes: notes ?? null,
     },
   });
+
+  sendPushToEmployee(orgId, existing.employeeId, {
+    title: decision === "APPROVED" ? "OT ได้รับการอนุมัติ" : "OT ถูกปฏิเสธ",
+    body: `${existing.workDate.toISOString().slice(0, 10)} ${Number(existing.hours)} ชม.${notes ? ` — ${notes}` : ""}`,
+    url: "/ot",
+    tag: `ot-${id}`,
+  }).catch((e) => console.warn("[push] ot notify failed:", e));
+
+  return updated;
 }
 
 export async function cancelOtRequest(orgId: string, id: string, employeeId: string) {
