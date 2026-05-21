@@ -10,6 +10,8 @@ const NAV = [
   { href: "/attendance/history", label: "ประวัติ" },
   { href: "/shifts", label: "กะ" },
   { href: "/schedule", label: "ตารางเวร" },
+  { href: "/leaves", label: "ลา" },
+  { href: "/leave-types", label: "ตั้งค่าลา" },
 ];
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
