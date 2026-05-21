@@ -33,6 +33,7 @@ model Organization {
   attendanceRecords AttendanceRecord[]
   leaveTypes        LeaveType[]
   leaveRequests     LeaveRequest[]
+  otRequests        OtRequest[]
 
   @@map("organizations")
 }
@@ -203,6 +204,8 @@ model Employee {
   attendanceRecords    AttendanceRecord[]
   leaveRequests        LeaveRequest[]   @relation("LeaveRequester")
   leaveApprovals       LeaveRequest[]   @relation("LeaveApprover")
+  otRequests           OtRequest[]      @relation("OtRequester")
+  otApprovals          OtRequest[]      @relation("OtApprover")
 
   @@unique([organizationId, employeeCode])
   @@index([organizationId])
@@ -585,4 +588,58 @@ enum LeaveStatus {
   APPROVED
   REJECTED
   CANCELLED
+}
+
+// ============================================================
+// Sprint 1.4 — OT Requests (features.md §4.1, §4.2 simplified, §4.4)
+// ============================================================
+
+// OtRequest — pre-request OT before working
+// Day-type stored simple: WEEKDAY/WEEKEND/HOLIDAY. Multiplier per Thai law:
+//   WEEKDAY:  1.5x of hourly rate
+//   WEEKEND:  3x of hourly rate (Thai law: 1x regular + 3x OT, but most companies pay 3x flat)
+//   HOLIDAY:  3x of hourly rate
+// Phase 1: hourly rate manual input. Phase 2 payroll: auto-derive from salary.
+model OtRequest {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String      @map("organization_id") @db.Uuid
+  employeeId      String      @map("employee_id") @db.Uuid
+  workDate        DateTime    @map("work_date") @db.Date
+  startMinutes    Int         @map("start_minutes") // minutes from midnight (local Bkk)
+  endMinutes      Int         @map("end_minutes")
+  hours           Decimal     @db.Decimal(5, 2) // computed at create (handles midnight cross)
+  dayType         OtDayType   @default(WEEKDAY) @map("day_type")
+  hourlyRate      Decimal?    @map("hourly_rate") @db.Decimal(10, 2) // baht/hour at time of request
+  estimatedPay    Decimal?    @map("estimated_pay") @db.Decimal(10, 2)
+  reason          String
+  status          OtStatus    @default(REQUESTED)
+  approverId      String?     @map("approver_id") @db.Uuid
+  decidedAt       DateTime?   @map("decided_at")
+  decisionNotes   String?     @map("decision_notes")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee     Employee     @relation("OtRequester", fields: [employeeId], references: [id], onDelete: Cascade)
+  approver     Employee?    @relation("OtApprover", fields: [approverId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([status])
+  @@index([workDate])
+  @@index([employeeId, workDate])
+  @@map("ot_requests")
+}
+
+enum OtStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum OtDayType {
+  WEEKDAY
+  WEEKEND
+  HOLIDAY
 }
